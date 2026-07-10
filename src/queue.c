@@ -7065,6 +7065,9 @@ _dispatch_pthread_root_queue_dispose(dispatch_queue_global_t dq,
 #pragma mark dispatch_runloop_queue
 
 DISPATCH_STATIC_GLOBAL(bool _dispatch_program_is_probably_callback_driven);
+#if defined(DARLING) && defined(__arm64__)
+DISPATCH_STATIC_GLOBAL(dispatch_semaphore_t _dispatch_darling_main_queue_semaphore);
+#endif
 
 #if DISPATCH_COCOA_COMPAT
 DISPATCH_STATIC_GLOBAL(dispatch_once_t _dispatch_main_q_handle_pred);
@@ -7592,6 +7595,12 @@ void
 _dispatch_main_queue_wakeup(dispatch_queue_main_t dq, dispatch_qos_t qos,
 		dispatch_wakeup_flags_t flags)
 {
+#if defined(DARLING) && defined(__arm64__)
+	if (_dispatch_queue_is_thread_bound(dq) && _dispatch_darling_main_queue_semaphore) {
+		dispatch_semaphore_signal(_dispatch_darling_main_queue_semaphore);
+		return;
+	}
+#endif
 #if DISPATCH_COCOA_COMPAT
 	if (_dispatch_queue_is_thread_bound(dq)) {
 		return _dispatch_runloop_queue_wakeup(dq->_as_dl, qos, flags);
@@ -7630,6 +7639,15 @@ void
 dispatch_main(void)
 {
 	_dispatch_root_queues_init();
+#if defined(DARLING) && defined(__arm64__)
+	_dispatch_program_is_probably_callback_driven = true;
+	_dispatch_darling_main_queue_semaphore = dispatch_semaphore_create(0);
+	for (;;) {
+		_dispatch_main_queue_callback_4CF(NULL);
+		dispatch_semaphore_wait(_dispatch_darling_main_queue_semaphore,
+				DISPATCH_TIME_FOREVER);
+	}
+#endif
 #if HAVE_PTHREAD_MAIN_NP
 	if (pthread_main_np()) {
 #endif
