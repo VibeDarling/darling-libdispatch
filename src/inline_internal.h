@@ -362,6 +362,24 @@ _dispatch_retain_unote_owner(dispatch_unote_t du)
 }
 
 DISPATCH_ALWAYS_INLINE
+static inline bool
+_dispatch_retain_unote_owner_try(dispatch_unote_t du)
+{
+	dispatch_object_t dou;
+	dou._do = _dispatch_wref2ptr(du._du->du_owner_wref);
+	if (unlikely(!dou._do)) {
+		return false;
+	}
+	int ref_cnt;
+	os_atomic_rmw_loop2o(dou._os_obj, os_obj_ref_cnt, ref_cnt, ref_cnt + 2, relaxed, {
+		if (unlikely(ref_cnt <= 0)) {
+			os_atomic_rmw_loop_give_up(return false);
+		}
+	});
+	return true;
+}
+
+DISPATCH_ALWAYS_INLINE
 static inline void
 _dispatch_release_unote_owner_tailcall(dispatch_unote_t du)
 {

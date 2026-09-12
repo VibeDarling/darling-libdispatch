@@ -454,6 +454,9 @@ DISPATCH_NOINLINE
 static void
 _dispatch_kevent_merge(dispatch_unote_t du, dispatch_kevent_t ke)
 {
+	if (unlikely(!du._du || !dux_type(du._du))) {
+		return;
+	}
 	dispatch_unote_action_t action = dux_type(du._du)->dst_action;
 	pthread_priority_t pp = 0;
 	uintptr_t data;
@@ -462,7 +465,10 @@ _dispatch_kevent_merge(dispatch_unote_t du, dispatch_kevent_t ke)
 	// threads running _dispatch_source_invoke2 to dispose of the source,
 	// so we can't safely borrow the reference we get from the muxnote udata
 	// anymore, and need our own <rdar://20382435>
-	_dispatch_retain_unote_owner(du);
+	if (unlikely(!_dispatch_retain_unote_owner_try(du))) {
+		_dispatch_debug("dropped event for dead unote: du=%p", du._du);
+		return;
+	}
 
 	switch (action) {
 	case DISPATCH_UNOTE_ACTION_PASS_DATA:
@@ -528,6 +534,9 @@ static void
 _dispatch_kevent_merge_muxed(dispatch_kevent_t ke)
 {
 	dispatch_muxnote_t dmn = _dispatch_kevent_get_muxnote(ke);
+	if (unlikely(!dmn)) {
+		return;
+	}
 	dispatch_unote_linkage_t dul, dul_next;
 
 	if (ke->flags & (EV_ONESHOT | EV_DELETE)) {
@@ -535,7 +544,10 @@ _dispatch_kevent_merge_muxed(dispatch_kevent_t ke)
 		dmn->dmn_kev.flags |= EV_DELETE;
 	}
 	LIST_FOREACH_SAFE(dul, &dmn->dmn_unotes_head, du_link, dul_next) {
-		_dispatch_kevent_merge(_dispatch_unote_linkage_get_unote(dul), ke);
+		dispatch_unote_t du = _dispatch_unote_linkage_get_unote(dul);
+		if (du._du && dux_type(du._du)) {
+			_dispatch_kevent_merge(du, ke);
+		}
 	}
 }
 
@@ -2959,7 +2971,9 @@ _dispatch_mach_notify_merge(mach_port_t name, uint32_t data, bool final)
 		os_atomic_store2o(du._du, dmsr_notification_armed, 0, relaxed);
 		if (final || fflags) {
 			// consumed by dux_merge_evt()
-			_dispatch_retain_unote_owner(du);
+			if (unlikely(!_dispatch_retain_unote_owner_try(du))) {
+				continue;
+			}
 			if (final) _dispatch_unote_unregister_muxed(du);
 			if (fflags && dux_type(du._du)->dst_action ==
 					DISPATCH_UNOTE_ACTION_SOURCE_OR_FFLAGS) {
