@@ -648,8 +648,18 @@ _dispatch_object_debug(dispatch_object_t object, const char *message, ...);
 #endif // DISPATCH_DEBUG
 
 #ifdef __BLOCKS__
+#if __has_feature(ptrauth_calls)
+// Block_layout.invoke is signed with the block-function key and its own storage address
+// (libclosure's _Block_get_function_pointer); re-sign it as a plain C function pointer.
+#define _dispatch_Block_invoke(bb) \
+		((dispatch_function_t)ptrauth_auth_and_resign( \
+				(void *)((struct Block_layout *)(bb))->invoke, \
+				ptrauth_key_block_function, &((struct Block_layout *)(bb))->invoke, \
+				ptrauth_key_function_pointer, 0))
+#else
 #define _dispatch_Block_invoke(bb) \
 		((dispatch_function_t)((struct Block_layout *)bb)->invoke)
+#endif
 
 void *_dispatch_Block_copy(void *block);
 #if __GNUC__
